@@ -16,7 +16,7 @@ manifest_file = os.path.join(drive_path, 'brain_observatory_manifest.json')
 boc = BrainObservatoryCache(manifest_file=manifest_file)
 
 
-sys.path.append('~/swdb_2017_tools/projects/deconvolution-inference/OASIS')
+sys.path.append('/home/michaelo/swdb_2017_tools/projects/deconvolution-inference/OASIS')
 import ca_tools as tools
 
 ##################################
@@ -29,6 +29,7 @@ import ca_tools as tools
 # return cell specimen ids
 
 ##################################
+
 
 def get_good_natural_movie_experiments(visual_area):
     movie_names = ['natural_movie_one', 'natural_movie_two', 'natural_movie_three']
@@ -80,6 +81,7 @@ class natural_movie_analysis:
         self._min_max_shift = None
         self._corrected_frame_numbers = None
         self._cell_indicies = None
+        self._events = None
 
     @property
     def cell_indicies(self):
@@ -221,7 +223,11 @@ class natural_movie_analysis:
             all_shifted_stims.append(shifted_stims)
         return all_shifted_stims
 
-    def compute_STA(self, delays=7, whiten=True, sigma=3):
+    def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=1):
+
+        if event_type not in self.events.keys():
+            raise ValueError('Please specifiy one of the following for event_type: ' + str(self.events.keys()))
+
         STA = list(np.zeros(delays, dtype='float32'))
         count = list(np.zeros(delays, dtype='float32'))
 
@@ -230,7 +236,7 @@ class natural_movie_analysis:
         else:
             movie_dict = self._movie_warps
 
-        for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.dffs, self.cell_indicies):
+        for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
             for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
 
                 if movie_name not in movie_dict.keys():
@@ -275,14 +281,32 @@ class natural_movie_analysis:
             self._dffs = dffs_list
         return self._dffs
 
+    def _apply_deconvolution(self, dff):
+        out = tools.ca_deconvolution(dff[0])
+
+        for d in dff[1:]:
+            tmp = tools.ca_deconvolution(d)
+            for k in tmp.keys():
+                out[k] = np.vstack([out[k], tmp[k]])
+        return out
+
     @property
     def events(self):
         if self._events is None:
             dffs = [dataset.get_dff_traces()[1][ci, :] * self.pixperdeg * self.downsample for dataset, ci in zip(self.datasets, self.cell_indicies)]
-            
+            events = [self._apply_deconvolution(d) for d in dffs]
 
-            out = [tools.ca_deconvolution(d) for d in dffs]
-            
+            keys = events[0].keys()
+            events_dict = {}
+            for k in keys:
+                events_list = []
+                for (e, ms) in zip(events, self._movie_sample_list):
+                    events_list.append([e[k][:, mss[0]:mss[1]] for mss in ms[1]])
+                events_dict[k] = events_list
+            events_dict['dffs'] = self.dffs
+            self._events = events_dict
+        return self._events
+
     @property
     def corrected_frame_numbers(self):
         if self._corrected_frame_numbers is None:
