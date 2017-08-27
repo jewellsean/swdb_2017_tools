@@ -24,7 +24,6 @@ import ca_tools as tools
 
 # TODO:
 
-# incorporate natural images
 # with/without eye correction
 # take vector of centers and crop
 
@@ -67,7 +66,7 @@ class natural_movie_analysis:
         self.datasets = [boc.get_ophys_experiment_data(ophys_experiment_id=s) for s in sessions]
 
         self.downsample = downsample
-        self._movie_names = ['natural_movie_one', 'natural_movie_two', 'natural_movie_three']
+        self._movie_names = ['natural_movie_one', 'natural_movie_two', 'natural_movie_three', 'natural_scenes']
         self._movie_warps = {}
         self._whitened_movie_warps = {}
         self._movie_sample_list = self._get_movie_sample_indexes(self.datasets)
@@ -183,7 +182,7 @@ class natural_movie_analysis:
 
         return shift_stim
 
-    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff, chunk=2000):
+    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff, chunk=1000):
         '''
         make shifted stimuli
 
@@ -201,7 +200,7 @@ class natural_movie_analysis:
             # make larger stim defined by maximum shifts with a little extra slack
             shift_stim_shape = (len(sl), sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 2, sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 2)
 
-            shift_stim = 128*np.ones(shift_stim_shape, dtype='uint8')
+            shift_stim = 128*np.ones(shift_stim_shape, dtype='float32')
 
             sl = sl + [shift_stim_shape[1]/2, shift_stim_shape[2]/2]
             good_shift_locations = ~np.isnan(sl[:, 0])
@@ -219,7 +218,7 @@ class natural_movie_analysis:
             shifted_stims = []
             for (movie_name, sl2, cfn2) in zip(msl[0], sl, cfn):
                 if movie_name not in self._movie_warps.keys():
-                    tmp_movie = ds.get_stimulus_template(movie_name)
+                    tmp_movie = self._get_stimulus_template(ds, movie_name)
                     tmp = zoom(m.natural_movie_image_to_screen(tmp_movie[0], origin='upper'), [self.downsample, self.downsample], order=1)
                     tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
                     for i in range(len(tmp)):
@@ -249,25 +248,21 @@ class natural_movie_analysis:
             for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
 
                 if movie_name not in movie_dict.keys():
-                    tmp_movie = ds.get_stimulus_template(movie_name)
+                    tmp_movie = self._get_stimulus_template(ds, movie_name)
                     tmp = zoom(m.natural_movie_image_to_screen(tmp_movie[0], origin='upper'), [self.downsample, self.downsample], order=1)
-                    tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
+                    tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='float32')
                     for i in range(len(tmp)):
+                        tw = (np.float32(zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)) / 255) - 0.5
                         if whiten:
-                            tw = -gaussian_laplace((np.float32(zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)) / 255) - 0.5, [sigma, sigma])
-                            tw += .01
-                            tw /= .025
-                            tw *= 255
-                            tmp_warp[i] = np.uint8(tw)
-                        else:
-                            tmp_warp[i] = zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)
+                            tw = -gaussian_laplace(tw, [sigma, sigma])
+
+                        tmp_warp[i] = tw
+
                     movie_dict[movie_name] = tmp_warp
 
                 ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
 
                 for tmp_warp, dff3 in ssg:
-                    tmp_warp = np.float32(tmp_warp) / 255
-                    tmp_warp -= 0.5
                     for d in range(delays):
                         if d > 0:
                             STA[d] += np.tensordot(dff3[:, d:], tmp_warp[:-d][None, ...], axes=[1, 1])
@@ -277,6 +272,12 @@ class natural_movie_analysis:
                             count[d] += dff3.shape[1]
 
         return [mm/cc for mm, cc in zip(STA, count)]
+
+    def _get_stimulus_template(dataset, stim_name):
+        out = dataset.get_stimulus_template(stim_name)
+        if stim_name is 'natural_scenes':
+            out = np.vstack([128*np.ones((1, out.shape[1], out.shape[2]), dtype='uint8'), out])
+        return out
 
     @property
     def dffs(self):
@@ -325,7 +326,10 @@ class natural_movie_analysis:
                 for movie_name in ms[0]:
                     stim_table = dataset.get_stimulus_table(movie_name)
                     frame_starts = deque(stim_table['start'])
-                    frame_numbers = deque(stim_table['frame'])
+                    if movie_name is 'natural_scenes':
+                        frame_numbers = deque(stim_table['frame'] + 1)
+                    else:
+                        frame_numbers = deque(stim_table['frame'])
 
                     cfn = [frame_numbers.popleft()]
                     start_prev = frame_starts.popleft()
