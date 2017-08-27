@@ -26,6 +26,7 @@ import ca_tools as tools
 
 # with/without eye correction
 # take vector of centers and crop
+# make generator for keras fitting
 
 ##################################
 
@@ -73,6 +74,9 @@ class natural_movie_analysis:
 
         # calculate pixels per degree
         self.pixperdeg = 1 / m.pixels_to_visual_degrees(n=1)
+        self.mask = m.get_mask()
+        self.mask_min = [x.min() for x in np.where(self.mask)]
+        self.mask_max = [x.max() for x in np.where(self.mask)]
 
         self._dffs = None
         self._pupil_locs = None
@@ -154,7 +158,7 @@ class natural_movie_analysis:
         else:
             movie_warp = m.natural_movie_image_to_screen(image,  origin='upper')
 
-        return movie_warp
+        return zoom(movie_warp[self.mask_min[0]:self.mask_max[0], self.mask_min[1]:self.mask_max[1]], [self.downsample, self.downsample])
 
     def _make_shifted_stim(self, original_stim, shift_locations, frame_numbers):
         '''
@@ -225,7 +229,7 @@ class natural_movie_analysis:
             all_shifted_stims.append(shifted_stims)
         return all_shifted_stims
 
-    def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=1):
+    def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=3):
 
         if event_type not in self.events.keys():
             raise ValueError('Please specifiy one of the following for event_type: ' + str(self.events.keys()))
@@ -236,7 +240,7 @@ class natural_movie_analysis:
         if whiten:
             if 'sigma' in self._whitened_movie_warps.keys() and self._whitened_movie_warps['sigma'] is not sigma:
                 self._whitened_movie_warps = {}
-                self._whitened_movie_warps['sigma'] = sigma
+            self._whitened_movie_warps['sigma'] = sigma
             movie_dict = self._whitened_movie_warps
         else:
             movie_dict = self._movie_warps
@@ -248,7 +252,7 @@ class natural_movie_analysis:
                     tmp_movie = self._get_stimulus_template(ds, movie_name)
                     tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
                     tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='float32')
-                    for i in range(len(tmp)):
+                    for i in range(len(tmp_movie)):
                         tw = (np.float32(self.warp_movie_to_screen(tmp_movie[i], movie_name)) / 255) - 0.5
                         if whiten:
                             tw = -gaussian_laplace(tw, [sigma, sigma])
