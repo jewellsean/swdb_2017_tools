@@ -108,7 +108,8 @@ class natural_movie_analysis:
                 try:
                     stim_table = dataset.get_stimulus_table(movie_name)
                     frame_starts = list(stim_table['start'])
-                    stim_range.append((frame_starts[0], frame_starts[-1] + 1))
+                    frame_ends = list(stim_table['end'])
+                    stim_range.append((frame_starts[0], np.maximum(frame_starts[-1] + 1, frame_ends[-1])))
                     movies_used.append(movie_name)
                 except:
                     continue
@@ -273,7 +274,7 @@ class natural_movie_analysis:
 
         return [mm/cc for mm, cc in zip(STA, count)]
 
-    def _get_stimulus_template(dataset, stim_name):
+    def _get_stimulus_template(self, dataset, stim_name):
         out = dataset.get_stimulus_template(stim_name)
         if stim_name is 'natural_scenes':
             out = np.vstack([128*np.ones((1, out.shape[1], out.shape[2]), dtype='uint8'), out])
@@ -326,6 +327,7 @@ class natural_movie_analysis:
                 for movie_name in ms[0]:
                     stim_table = dataset.get_stimulus_table(movie_name)
                     frame_starts = deque(stim_table['start'])
+                    frame_end = deque(stim_table['end']).popleft()
                     if movie_name is 'natural_scenes':
                         frame_numbers = deque(stim_table['frame'] + 1)
                     else:
@@ -343,6 +345,10 @@ class natural_movie_analysis:
                         start_prev += 1
                         cfn.append(frame_numbers.popleft())
                     movie_cfn.append(cfn)
+
+                    while frame_end > start_prev + 1:
+                        cfn.append(cfn[-1])
+                        start_prev += 1
 
                 corrected_frame_numbers.append(movie_cfn)
             self._corrected_frame_numbers = corrected_frame_numbers
