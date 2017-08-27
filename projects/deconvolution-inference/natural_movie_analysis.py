@@ -148,15 +148,11 @@ class natural_movie_analysis:
 
         return self._min_max_shift
 
-    def warp_movie_to_screen(self, movie):
-        tmp = m.natural_movie_image_to_screen(movie[0],  origin='upper')
-        movie_warp = np.zeros((len(movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
-
-        for i in range(len(movie)):
-            movie_warp[i] = m.natural_movie_image_to_screen(movie[i], origin='upper')
-
-        if self.downsample < 1:
-            movie_warp = zoom(movie_warp, [1, self.downsample, self.downsample], order=1)
+    def warp_movie_to_screen(self, image, movie_name):
+        if movie_name is 'natural_scenes':
+            movie_warp = m.natural_scene_image_to_screen(image,  origin='upper')
+        else:
+            movie_warp = m.natural_movie_image_to_screen(image,  origin='upper')
 
         return movie_warp
 
@@ -183,7 +179,7 @@ class natural_movie_analysis:
 
         return shift_stim
 
-    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff, chunk=1000):
+    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff, chunk=500):
         '''
         make shifted stimuli
 
@@ -220,10 +216,10 @@ class natural_movie_analysis:
             for (movie_name, sl2, cfn2) in zip(msl[0], sl, cfn):
                 if movie_name not in self._movie_warps.keys():
                     tmp_movie = self._get_stimulus_template(ds, movie_name)
-                    tmp = zoom(m.natural_movie_image_to_screen(tmp_movie[0], origin='upper'), [self.downsample, self.downsample], order=1)
+                    tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
                     tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
                     for i in range(len(tmp)):
-                        tmp_warp[i] = zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)
+                        tmp_warp[i] = self.warp_movie_to_screen(tmp_movie[i], movie_name)
                     self._movie_warps[movie_name] = tmp_warp
                 shifted_stims.append(self._make_shifted_stim(self._movie_warps[movie_name], sl2, cfn2))
             all_shifted_stims.append(shifted_stims)
@@ -250,10 +246,10 @@ class natural_movie_analysis:
 
                 if movie_name not in movie_dict.keys():
                     tmp_movie = self._get_stimulus_template(ds, movie_name)
-                    tmp = zoom(m.natural_movie_image_to_screen(tmp_movie[0], origin='upper'), [self.downsample, self.downsample], order=1)
+                    tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
                     tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='float32')
                     for i in range(len(tmp)):
-                        tw = (np.float32(zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)) / 255) - 0.5
+                        tw = (np.float32(self.warp_movie_to_screen(tmp_movie[i], movie_name)) / 255) - 0.5
                         if whiten:
                             tw = -gaussian_laplace(tw, [sigma, sigma])
 
