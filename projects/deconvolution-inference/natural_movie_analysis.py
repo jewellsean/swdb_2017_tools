@@ -16,17 +16,17 @@ manifest_file = os.path.join(drive_path, 'brain_observatory_manifest.json')
 boc = BrainObservatoryCache(manifest_file=manifest_file)
 
 
+sys.path.append('/home/michaelo/swdb_2017_tools/projects/deconvolution-inference/')
 sys.path.append('/home/michaelo/swdb_2017_tools/projects/deconvolution-inference/OASIS')
 import ca_tools as tools
 
 ##################################
 
 # TODO:
-# incorporate spikes
+
 # incorporate natural images
 # with/without eye correction
 # take vector of centers and crop
-# return cell specimen ids
 
 ##################################
 
@@ -81,16 +81,22 @@ class natural_movie_analysis:
         self._min_max_shift = None
         self._corrected_frame_numbers = None
         self._cell_indicies = None
+        self._cell_ids = None
         self._events = None
+
+    @property
+    def cell_ids(self):
+        if self._cell_ids is None:
+            cell_ids = set(self.datasets[0].get_cell_specimen_ids())
+            for ds in self.datasets[1:]:
+                cell_ids = cell_ids.intersection(set(ds.get_cell_specimen_ids()))
+            self._cell_ids = list(cell_ids)
+        return self._cell_ids
 
     @property
     def cell_indicies(self):
         if self._cell_indicies is None:
-            cell_ids = set(self.datasets[0].get_cell_specimen_ids())
-            for ds in self.datasets[1:]:
-                cell_ids = cell_ids.intersection(set(ds.get_cell_specimen_ids()))
-            cell_ids = list(cell_ids)
-            self._cell_indicies = [ds.get_cell_specimen_indices(cell_ids) for ds in self.datasets]
+            self._cell_indicies = [ds.get_cell_specimen_indices(self.cell_ids) for ds in self.datasets]
         return self._cell_indicies
 
     def _get_movie_sample_indexes(self, datasets):
@@ -232,6 +238,9 @@ class natural_movie_analysis:
         count = list(np.zeros(delays, dtype='float32'))
 
         if whiten:
+            if 'sigma' in self._whitened_movie_warps.keys() and self._whitened_movie_warps['sigma'] is not sigma:
+                self._whitened_movie_warps = {}
+                self._whitened_movie_warps['sigma'] = sigma
             movie_dict = self._whitened_movie_warps
         else:
             movie_dict = self._movie_warps
@@ -245,14 +254,14 @@ class natural_movie_analysis:
                     tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
                     for i in range(len(tmp)):
                         if whiten:
-                            tw = -gaussian_laplace((np.float32(zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)) / 255) - 0.5, sigma)
+                            tw = -gaussian_laplace((np.float32(zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)) / 255) - 0.5, [sigma, sigma])
                             tw += .01
                             tw /= .025
                             tw *= 255
                             tmp_warp[i] = np.uint8(tw)
                         else:
                             tmp_warp[i] = zoom(m.natural_movie_image_to_screen(tmp_movie[i], origin='upper'), [self.downsample, self.downsample], order=1)
-                    self._whitened_movie_warps[movie_name] = tmp_warp
+                    movie_dict[movie_name] = tmp_warp
 
                 ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
 
