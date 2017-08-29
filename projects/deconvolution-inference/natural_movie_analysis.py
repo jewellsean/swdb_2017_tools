@@ -5,7 +5,9 @@ import allensdk.brain_observatory.stimulus_info as si
 from scipy.ndimage.interpolation import zoom
 import os
 import sys
+import copy
 from scipy.ndimage.filters import gaussian_laplace
+# from progress.bar import Bar
 
 import cPickle as pickle
 
@@ -24,9 +26,9 @@ import ca_tools as tools
 
 # TODO:
 
-# with/without eye correction
 # take vector of centers and crop
 # make generator for keras fitting
+# whiten after average?
 
 ##################################
 
@@ -66,10 +68,22 @@ class natural_movie_analysis:
         sessions = good_exps[experiment_id]
         self.datasets = [boc.get_ophys_experiment_data(ophys_experiment_id=s) for s in sessions]
 
+        self.experiment_id = experiment_id
         self.downsample = downsample
         self._movie_names = ['natural_movie_one', 'natural_movie_two', 'natural_movie_three', 'natural_scenes']
+        # self._movie_names = ['natural_movie_one', 'natural_movie_two', 'natural_movie_three']
+        # self._movie_names = ['natural_scenes']
+
         self._movie_warps = {}
-        self._whitened_movie_warps = {}
+
+        for mn in self._movie_names:
+            try:
+                with open('/tmp/' + mn + '_' + str(self.downsample) + '.pickle', 'rb') as handle:
+                    self._movie_warps[mn] = pickle.load(handle)
+            except:
+                continue
+
+        # self._whitened_movie_warps = {}
         self._movie_sample_list = self._get_movie_sample_indexes(self.datasets)
 
         # calculate pixels per degree
@@ -85,7 +99,17 @@ class natural_movie_analysis:
         self._corrected_frame_numbers = None
         self._cell_indicies = None
         self._cell_ids = None
-        self._events = None
+
+        try:
+            with open('/tmp/' + str(hash(str(self.experiment_id) + str(self._movie_names))) + '.pickle', 'rb') as handle:
+                self._events = pickle.load(handle)
+        except:
+            self._events = None
+
+        self._STA = None
+        self._MA = None
+
+        self.chunk = 500
 
     @property
     def cell_ids(self):
@@ -183,11 +207,12 @@ class natural_movie_analysis:
 
         return shift_stim
 
-    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff, chunk=500):
+    def _make_shifted_stim_resp_generator(self, original_stim, shift_locations, frame_numbers, dff):
         '''
         make shifted stimuli
 
         '''
+        chunk = self.chunk
 
         sh = original_stim.shape
 
@@ -199,9 +224,13 @@ class natural_movie_analysis:
             fn = frame_numbers[cut:cut+chunk]
             cdff = dff[:, cut:cut+chunk]
             # make larger stim defined by maximum shifts with a little extra slack
-            shift_stim_shape = (len(sl), sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 2, sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 2)
+            shift_stim_shape = (len(sl), sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 3, sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 3)
 
-            shift_stim = 128*np.ones(shift_stim_shape, dtype='float32')
+            original_stim = (np.float32(original_stim)/255) - 0.5
+
+            shift_stim = np.zeros(shift_stim_shape, dtype='float32')
+
+            orig_stim = np.zeros((len(sl), original_stim.shape[1], original_stim.shape[2]), dtype='float32')
 
             sl = sl + [shift_stim_shape[1]/2, shift_stim_shape[2]/2]
             good_shift_locations = ~np.isnan(sl[:, 0])
@@ -210,8 +239,9 @@ class natural_movie_analysis:
                 if good_shift_locations[i]:
                     shift_stim[i, -sh[1]/2 + np.int32(sl[i, 0]):np.int32(sl[i, 0]) + sh[1]/2,
                                   -sh[2]/2 + np.int32(sl[i, 1]):np.int32(sl[i, 1]) + sh[2]/2] = original_stim[fn[i]]
+                orig_stim[i] = original_stim[fn[i]]
 
-            yield shift_stim, cdff
+            yield shift_stim, orig_stim, cdff
 
     def get_all_shifted_stims(self):
         all_shifted_stims = []
@@ -229,50 +259,139 @@ class natural_movie_analysis:
             all_shifted_stims.append(shifted_stims)
         return all_shifted_stims
 
-    def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=3):
+    def keras_generator(self, event_type='OASIS', delays=7, batch_size=400, shift=True):
+        from keras.engine.training import _standardize_input_data
+        if event_type not in self.events.keys():
+            raise ValueError('Please specifiy one of the following for event_type: ' + str(self.events.keys()))
+
+            movie_dict = self._movie_warps
+
+            for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
+                for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
+
+                    if movie_name not in movie_dict.keys():
+                        tmp_movie = self._get_stimulus_template(ds, movie_name)
+                        # bar = Bar('Processing ' + movie_name, max=len(tmp_movie))
+                        tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
+                        tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
+                        for i in range(len(tmp_movie)):
+                            tmp_warp[i] = self.warp_movie_to_screen(tmp_movie[i], movie_name)
+                            # bar.next()
+
+                        with open('/tmp/' + movie_name + '_' + str(self.downsample) + '.pickle', 'wb') as handle:
+                            pickle.dump(tmp_warp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                        movie_dict[movie_name] = tmp_warp
+                        # bar.finish()
+
+                    # ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
+
+                    original_stim = movie_dict[movie_name]
+                    frame_numbers = cfn2
+                    shift_locations = sl2
+                    resp = dff2
+
+                    sh = original_stim.shape
+
+                    idx = range(0, len(frame_numbers), batch_size)
+
+                    for cut in idx:
+
+                        sl = shift_locations[cut:cut+batch_size]
+                        fn = frame_numbers[cut:cut+batch_size]
+                        resp_out = resp[:, cut:cut+batch_size]
+                        # make larger stim defined by maximum shifts with a little extra slack
+                        shift_stim_shape = (len(sl),
+                                            sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 2,
+                                            sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 2)
+
+                        original_stim = (np.float32(original_stim)/255) - 0.5
+                        if shift:
+                            out_stim = np.zeros(shift_stim_shape, dtype='float32')
+                        else:
+                            out_stim = np.zeros((len(sl), original_stim.shape[1], original_stim.shape[2]), dtype='float32')
+
+                        sl = sl + [shift_stim_shape[1]/2, shift_stim_shape[2]/2]
+                        good_shift_locations = ~np.isnan(sl[:, 0])
+
+                        for i in range(len(sl)):
+                            if shift:
+                                if good_shift_locations[i]:
+                                    out_stim[i, -sh[1]/2 + np.int32(sl[i, 0]):np.int32(sl[i, 0]) + sh[1]/2,
+                                                -sh[2]/2 + np.int32(sl[i, 1]):np.int32(sl[i, 1]) + sh[2]/2] = original_stim[fn[i]]
+                            else:
+                                out_stim[i] = original_stim[fn[i]]
+
+                            x = out_stim
+                            batch_ids = np.arange(x.shape[0])
+
+                            tlist = [1, 0] + list(range(2, np.ndim(x) + 1))
+
+                            batch_ids = [np.maximum(0, batch_ids - d) for d in range(delays)]
+                            x_batch = _standardize_input_data(x[batch_ids, :].transpose(tlist), ['x_batch'])
+
+                        yield (x_batch, resp_out)
+
+    def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=3, subtract_mean=True):
 
         if event_type not in self.events.keys():
             raise ValueError('Please specifiy one of the following for event_type: ' + str(self.events.keys()))
 
-        STA = list(np.zeros(delays, dtype='float32'))
-        count = list(np.zeros(delays, dtype='float32'))
+        if self._STA is None:
+            STA = list(np.zeros(delays, dtype='float32'))
+            STAc = list(np.zeros(delays, dtype='float32'))
+            MA = list(np.zeros(delays, dtype='float32'))
+            MAc = list(np.zeros(delays, dtype='float32'))
+            count = list(np.zeros(delays, dtype='float32'))
+            scount = list(np.zeros(delays, dtype='float32'))
 
-        if whiten:
-            if 'sigma' in self._whitened_movie_warps.keys() and self._whitened_movie_warps['sigma'] is not sigma:
-                self._whitened_movie_warps = {}
-            self._whitened_movie_warps['sigma'] = sigma
-            movie_dict = self._whitened_movie_warps
-        else:
             movie_dict = self._movie_warps
 
-        for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
-            for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
+            for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
+                for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
 
-                if movie_name not in movie_dict.keys():
-                    tmp_movie = self._get_stimulus_template(ds, movie_name)
-                    tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
-                    tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='float32')
-                    for i in range(len(tmp_movie)):
-                        tw = (np.float32(self.warp_movie_to_screen(tmp_movie[i], movie_name)) / 255) - 0.5
-                        if whiten:
-                            tw = -gaussian_laplace(tw, [sigma, sigma])
+                    if movie_name not in movie_dict.keys():
+                        tmp_movie = self._get_stimulus_template(ds, movie_name)
 
-                        tmp_warp[i] = tw
+                        tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
+                        tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
+                        for i in range(len(tmp_movie)):
+                            tmp_warp[i] = self.warp_movie_to_screen(tmp_movie[i], movie_name)
 
-                    movie_dict[movie_name] = tmp_warp
+                        with open('/tmp/' + movie_name + '_' + str(self.downsample) + '.pickle', 'wb') as handle:
+                            pickle.dump(tmp_warp, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-                ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
+                        movie_dict[movie_name] = tmp_warp
 
-                for tmp_warp, dff3 in ssg:
-                    for d in range(delays):
-                        if d > 0:
-                            STA[d] += np.tensordot(dff3[:, d:], tmp_warp[:-d][None, ...], axes=[1, 1])
+                    ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
+
+                    for tmp_warp, orig, dff3 in ssg:
+                        for d in range(delays):
+                            STAc[d] += np.tensordot(dff3[:, d:], tmp_warp[:(len(tmp_warp)-d)][None, ...], axes=[1, 1])[:, 0]
+                            STA[d] += np.tensordot(dff3[:, d:], orig[:(len(orig)-d)][None, ...], axes=[1, 1])[:, 0]
+                            MAc[d] += np.sum(tmp_warp[:(len(tmp_warp)-d)], axis=0)
+                            MA[d] += np.sum(orig[:(len(orig)-d)], axis=0)
+                            scount[d] += np.sum(dff3[:, d:], axis=1)
                             count[d] += dff3[:, d:].shape[1]
-                        else:
-                            STA[d] += np.tensordot(dff3, tmp_warp[None, ...], axes=[1, 1])
-                            count[d] += dff3.shape[1]
 
-        return [mm/cc for mm, cc in zip(STA, count)]
+            self._STAc = [mm/sc[:, None, None] for mm, sc in zip(STAc, scount)]
+            self._STA = [mm/sc[:, None, None] for mm, sc in zip(STA, scount)]
+            self._MA = [mm/cc for mm, cc in zip(MA, count)]
+            self._MAc = [mm/cc for mm, cc in zip(MAc, count)]
+
+        out_sta = copy.deepcopy(self._STA)
+        out_stac = copy.deepcopy(self._STAc)
+
+        if subtract_mean:
+            out_sta = [x - y[None, ...] for x, y in zip(out_sta, self._MA)]
+            out_stac = [x - y[None, ...] for x, y in zip(out_stac, self._MAc)]
+
+        if whiten:
+            for o in range(len(out_sta)):
+                for on in range(out_sta[o].shape[0]):
+                    out_sta[o][on] = -gaussian_laplace(out_sta[o][on], [sigma, sigma])
+                    out_stac[o][on] = -gaussian_laplace(out_stac[o][on], [sigma, sigma])
+
+        return out_sta, out_stac
 
     def _get_stimulus_template(self, dataset, stim_name):
         out = dataset.get_stimulus_template(stim_name)
@@ -316,6 +435,9 @@ class natural_movie_analysis:
                 events_dict[k] = events_list
             events_dict['dffs'] = self.dffs
             self._events = events_dict
+
+            with open('/tmp/' + str(hash(str(self.experiment_id) + str(self._movie_names))) + '.pickle', 'wb') as handle:
+                pickle.dump(events_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return self._events
 
     @property
@@ -327,7 +449,7 @@ class natural_movie_analysis:
                 for movie_name in ms[0]:
                     stim_table = dataset.get_stimulus_table(movie_name)
                     frame_starts = deque(stim_table['start'])
-                    frame_end = deque(stim_table['end']).popleft()
+                    frame_end = deque(stim_table['end']).pop()
                     if movie_name is 'natural_scenes':
                         frame_numbers = deque(stim_table['frame'] + 1)
                     else:
