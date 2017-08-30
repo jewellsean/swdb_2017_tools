@@ -27,8 +27,7 @@ import ca_tools as tools
 # TODO:
 
 # take vector of centers and crop
-# make generator for keras fitting
-# whiten after average?
+# whiten before/after average
 
 ##################################
 
@@ -264,72 +263,73 @@ class natural_movie_analysis:
         if event_type not in self.events.keys():
             raise ValueError('Please specifiy one of the following for event_type: ' + str(self.events.keys()))
 
-            movie_dict = self._movie_warps
+        movie_dict = self._movie_warps
 
-            for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
-                for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
+        for (ds, msl, sl, cfn, dff, ci) in zip(self.datasets, self._movie_sample_list, self.shift_locs, self.corrected_frame_numbers, self.events[event_type], self.cell_indicies):
+            for (movie_name, sl2, cfn2, dff2) in zip(msl[0], sl, cfn, dff):
 
-                    if movie_name not in movie_dict.keys():
-                        tmp_movie = self._get_stimulus_template(ds, movie_name)
-                        # bar = Bar('Processing ' + movie_name, max=len(tmp_movie))
-                        tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
-                        tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
-                        for i in range(len(tmp_movie)):
-                            tmp_warp[i] = self.warp_movie_to_screen(tmp_movie[i], movie_name)
-                            # bar.next()
+                if movie_name not in movie_dict.keys():
+                    tmp_movie = self._get_stimulus_template(ds, movie_name)
+                    # bar = Bar('Processing ' + movie_name, max=len(tmp_movie))
+                    tmp = self.warp_movie_to_screen(tmp_movie[0], movie_name)
+                    tmp_warp = np.zeros((len(tmp_movie), tmp.shape[0], tmp.shape[1]), dtype='uint8')
+                    for i in range(len(tmp_movie)):
+                        tmp_warp[i] = self.warp_movie_to_screen(tmp_movie[i], movie_name)
+                        # bar.next()
 
-                        with open('/tmp/' + movie_name + '_' + str(self.downsample) + '.pickle', 'wb') as handle:
-                            pickle.dump(tmp_warp, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                        movie_dict[movie_name] = tmp_warp
-                        # bar.finish()
+                    with open('/tmp/' + movie_name + '_' + str(self.downsample) + '.pickle', 'wb') as handle:
+                        pickle.dump(tmp_warp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    movie_dict[movie_name] = tmp_warp
+                    # bar.finish()
 
-                    # ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
+                # ssg = self._make_shifted_stim_resp_generator(movie_dict[movie_name], sl2, cfn2, dff2)
 
-                    original_stim = movie_dict[movie_name]
-                    frame_numbers = cfn2
-                    shift_locations = sl2
-                    resp = dff2
+                original_stim = movie_dict[movie_name]
+                frame_numbers = cfn2
+                shift_locations = sl2
+                resp = dff2
 
-                    sh = original_stim.shape
+                sh = original_stim.shape
 
-                    idx = range(0, len(frame_numbers), batch_size)
+                idx = range(0, len(frame_numbers), batch_size)
+                # print(idx)
 
-                    for cut in idx:
+                for cut in idx:
 
-                        sl = shift_locations[cut:cut+batch_size]
-                        fn = frame_numbers[cut:cut+batch_size]
-                        resp_out = resp[:, cut:cut+batch_size]
-                        # make larger stim defined by maximum shifts with a little extra slack
-                        shift_stim_shape = (len(sl),
-                                            sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 2,
-                                            sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 2)
+                    sl3 = shift_locations[cut:cut+batch_size]
+                    fn = frame_numbers[cut:cut+batch_size]
+                    resp_out = resp[:, cut:cut+batch_size]
+                    # make larger stim defined by maximum shifts with a little extra slack
+                    shift_stim_shape = (len(sl3),
+                                        sh[1] + 2*np.maximum(self.min_max_shift[1][0], -self.min_max_shift[0][0]) + 2,
+                                        sh[2] + 2*np.maximum(self.min_max_shift[1][1], -self.min_max_shift[0][1]) + 2)
 
-                        original_stim = (np.float32(original_stim)/255) - 0.5
+                    if shift:
+                        out_stim = np.zeros(shift_stim_shape, dtype='float32')
+                    else:
+                        out_stim = np.zeros((len(sl3), original_stim.shape[1], original_stim.shape[2]), dtype='float32')
+
+                    sl3 = sl3 + [shift_stim_shape[1]/2, shift_stim_shape[2]/2]
+                    good_shift_locations = ~np.isnan(sl3[:, 0])
+
+                    for i in range(len(sl3)):
                         if shift:
-                            out_stim = np.zeros(shift_stim_shape, dtype='float32')
+                            if good_shift_locations[i]:
+                                out_stim[i, -sh[1]/2 + np.int32(sl3[i, 0]):np.int32(sl3[i, 0]) + sh[1]/2,
+                                            -sh[2]/2 + np.int32(sl3[i, 1]):np.int32(sl3[i, 1]) + sh[2]/2] = original_stim[fn[i]]
                         else:
-                            out_stim = np.zeros((len(sl), original_stim.shape[1], original_stim.shape[2]), dtype='float32')
+                            out_stim[i] = original_stim[fn[i]]
 
-                        sl = sl + [shift_stim_shape[1]/2, shift_stim_shape[2]/2]
-                        good_shift_locations = ~np.isnan(sl[:, 0])
+                    x = out_stim
+                    batch_ids = np.arange(x.shape[0])
+                    # print(batch_ids)
 
-                        for i in range(len(sl)):
-                            if shift:
-                                if good_shift_locations[i]:
-                                    out_stim[i, -sh[1]/2 + np.int32(sl[i, 0]):np.int32(sl[i, 0]) + sh[1]/2,
-                                                -sh[2]/2 + np.int32(sl[i, 1]):np.int32(sl[i, 1]) + sh[2]/2] = original_stim[fn[i]]
-                            else:
-                                out_stim[i] = original_stim[fn[i]]
+                    tlist = [1, 0] + list(range(2, np.ndim(x) + 1))
 
-                            x = out_stim
-                            batch_ids = np.arange(x.shape[0])
+                    batch_ids = [np.maximum(0, batch_ids - d) for d in range(delays)]
+                    x_batch = _standardize_input_data(x[batch_ids, :].transpose(tlist), ['x_batch'])
 
-                            tlist = [1, 0] + list(range(2, np.ndim(x) + 1))
-
-                            batch_ids = [np.maximum(0, batch_ids - d) for d in range(delays)]
-                            x_batch = _standardize_input_data(x[batch_ids, :].transpose(tlist), ['x_batch'])
-
-                        yield (x_batch, resp_out)
+                    yield (x_batch, resp_out)
 
     def compute_STA(self, event_type='OASIS', delays=7, whiten=True, sigma=3, subtract_mean=True):
 
