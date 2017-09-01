@@ -3,7 +3,7 @@ from scipy import signal
 from skimage import measure
 from sklearn import cluster
 
-def remove_small_clusters(mtx, labels, remove_size = 20):
+def remove_small_clusters(mtx, labels, remove_size):
 	'''
 		Remove small connected components 
 
@@ -55,7 +55,7 @@ def smooth(mtx, kernel_size):
 
 	'''
 	smooth = np.ones(shape=(kernel_size, kernel_size))
-	mtx_smooth = signal.convolve2d(mtx, smooth, boundary='symm', mode='same')
+	mtx_smooth = signal.convolve2d(mtx, smooth, mode='same')
 	return(mtx_smooth)
 
 def binarize(mtx, thresh):
@@ -78,7 +78,7 @@ def binarize(mtx, thresh):
 	mtx_threshold[mtx >= thresh] = 1
 	return(mtx_threshold)
 
-def compute_blocky_metric(mtx, kernel_size = 5, sd_thresh = 1, remove_size = 20):
+def compute_blocky_metric(mtx, kernel_size, sd_thresh, remove_size):
 	'''
 		Compute perimeter of all connected components for an input matrix after uniform
 		smoothing, Z-standardization, and cleaning for small components. 
