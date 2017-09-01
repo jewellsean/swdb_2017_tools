@@ -1,7 +1,7 @@
 import numpy as np 
 from scipy import signal
 from skimage import measure
-
+from sklearn import cluster
 
 def remove_small_clusters(mtx, labels, remove_size = 20):
 	'''
@@ -97,9 +97,9 @@ def compute_blocky_metric(mtx, kernel_size = 5, sd_thresh = 1, remove_size = 20)
 		matrix) and the perimeter of the clean matrix.
 
 	'''
-	mtx_smooth = smooth(mtx, kernel_size)
-	Z = standardize(mtx_smooth)
-	Z_threshold = binarize(Z, sd_thresh)
+	Z = standardize(mtx)
+	mtx_smooth = smooth(Z, kernel_size)
+	Z_threshold = binarize(mtx_smooth, sd_thresh)
 	labels = measure.label(Z_threshold)
 	Z_clean = remove_small_clusters(Z_threshold, labels, remove_size)
 	blockyness = measure.perimeter(Z_clean, neighbourhood=4)
@@ -127,6 +127,7 @@ def permute_and_dist(orig_mtx, params):
 def calculate_sampling_dist(mtx, params):
 	'''
 		Calculate the sampling distribution of blockyness based on random permutations
+		Output original matrix blocky-ness and the maximal blocky-ness based on bicluster algo
 
 		input: 
 		
@@ -156,6 +157,10 @@ def calculate_sampling_dist(mtx, params):
 	out['sample_distances'] = distances
 	out['samples'] = samples
 	out['p_value'] =  1 - ((np.sum(distances < orig_dist)) * 1.0) / params['num_samples']
+
+	## max blocky
+	cl = cluster.bicluster.SpectralCoclustering(n_clusters = 2, random_state = 0)
+
 
 	return(out)
 
