@@ -73,7 +73,7 @@ def binarize(mtx, thresh):
 
 	'''
 
-	mtx_threshold = mtx
+	mtx_threshold = mtx.copy()
 	mtx_threshold[mtx < thresh] = 0 
 	mtx_threshold[mtx >= thresh] = 1
 	return(mtx_threshold)
