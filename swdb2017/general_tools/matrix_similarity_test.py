@@ -97,7 +97,6 @@ def compute_blocky_metric(mtx, kernel_size, sd_thresh, remove_size):
 		matrix) and the perimeter of the clean matrix.
 
 	'''
-	Z = standardize(mtx)
 	mtx_smooth = smooth(Z, kernel_size)
 	Z = standardize(mtx_smooth)
 	Z_threshold = binarize(Z, sd_thresh)
