@@ -12,7 +12,7 @@ def permute(orig_mtx):
 	return(X_permuted)
 
 def matrix_similarity(model_mtx, mtx):
-	return(np.correlate(model_mtx.flatten(), mtx.flatten()))
+	return(np.corrcoef(model_mtx.flatten(), mtx.flatten()))
 	
 
 def calculate_sampling_dist(model_mtx, emp_mtx, num_samples):
