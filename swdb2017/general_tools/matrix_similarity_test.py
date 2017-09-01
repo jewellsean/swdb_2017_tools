@@ -97,12 +97,12 @@ def compute_blocky_metric(mtx, kernel_size = 5, sd_thresh = 1, remove_size = 20)
 		matrix) and the perimeter of the clean matrix.
 
 	'''
-	Z = standardize(mtx)
-	mtx_smooth = smooth(Z, kernel_size)
-	Z = standardize(mtx_smooth)
-	Z_threshold = binarize(Z, sd_thresh)
+	Z = standardize(mtx.copy())
+	mtx_smooth = smooth(Z.copy(), kernel_size)
+	Z = standardize(mtx_smooth.copy())
+	Z_threshold = binarize(Z.copy(), sd_thresh)
 	labels = measure.label(Z_threshold)
-	Z_clean = remove_small_clusters(Z_threshold, labels, remove_size)
+	Z_clean = remove_small_clusters(Z_threshold.copy(), labels, remove_size)
 	blockyness = measure.perimeter(Z_clean, neighbourhood=4)
 	
 	## prepare output dict
